@@ -15,6 +15,7 @@ from .test_preprocessor import TestStandardPreProcessor
 def get_preprocessor(config: Config, split):
     train_preprocessors = {
         'base': BasePreprocessor,
+        
         'draem': DRAEMPreprocessor,
         'cutpaste': CutPastePreprocessor,
         'augmix': AugMixPreprocessor,
@@ -26,6 +27,7 @@ def get_preprocessor(config: Config, split):
     }
     test_preprocessors = {
         'base': TestStandardPreProcessor,
+
         'draem': DRAEMPreprocessor,
         'cutpaste': CutPastePreprocessor,
     }
