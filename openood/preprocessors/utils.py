@@ -15,7 +15,7 @@ from .test_preprocessor import TestStandardPreProcessor
 def get_preprocessor(config: Config, split):
     train_preprocessors = {
         'base': BasePreprocessor,
-        
+        ### default base for now
         'draem': DRAEMPreprocessor,
         'cutpaste': CutPastePreprocessor,
         'augmix': AugMixPreprocessor,
@@ -27,15 +27,15 @@ def get_preprocessor(config: Config, split):
     }
     test_preprocessors = {
         'base': TestStandardPreProcessor,
-
+        ### default base for now
         'draem': DRAEMPreprocessor,
         'cutpaste': CutPastePreprocessor,
     }
 
     if split == 'train':
-        return train_preprocessors[config.preprocessor.name](config)
+        return train_preprocessors['base'](config) # [config.preprocessor.name](config)
     else:
         try:
-            return test_preprocessors[config.preprocessor.name](config)
+            return test_preprocessors['base'](config) # [config.preprocessor.name](config)
         except KeyError:
             return test_preprocessors['base'](config)

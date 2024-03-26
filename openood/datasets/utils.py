@@ -13,8 +13,20 @@ from .imglist_augmix_dataset import ImglistAugMixDataset
 from .imglist_extradata_dataset import ImglistExtraDataDataset, TwoSourceSampler
 from .udg_dataset import UDGDataset
 
+##### implementing standard preprocessing isntead, feel free to change... #####
 
-def get_dataloader(config: Config):
+# import yaml
+
+# with open("/Users/xy/Library/CloudStorage/OneDrive-NationalUniversityofSingapore/Implementations/CS5340_Uncertainty_Modelling_in_AI/configs/preprocessors/base_preprocessor.yml", "r") as yaml_file:
+#     baseprocessor_config = yaml.safe_load(yaml_file)
+
+
+def get_dataloader(config: Config,
+                   data_dir):
+    
+    """
+    data_dir refers to absolute path of data folder
+    """
     # prepare a dataloader dictionary
     dataset_config = config.dataset
     dataloader_dict = {}
@@ -25,6 +37,10 @@ def get_dataloader(config: Config):
         data_aux_preprocessor = TestStandardPreProcessor(config)
 
         if split_config.dataset_class == 'ImglistExtraDataDataset':
+            
+            split_config.imglist_pth = split_config.imglist_pth.replace("./data", data_dir) # added for convenience
+            split_config.data_dir = split_config.data_dir.replace("./data", data_dir)
+            
             dataset = ImglistExtraDataDataset(
                 name=dataset_config.name + '_' + split,
                 imglist_pth=split_config.imglist_pth,
@@ -44,7 +60,7 @@ def get_dataloader(config: Config):
             dataloader = DataLoader(
                 dataset,
                 batch_sampler=batch_sampler,
-                num_workers=dataset_config.num_workers,
+                # num_workers=dataset_config.num_workers,
             )
         elif split_config.dataset_class == 'ImglistAugMixDataset':
             dataset = ImglistAugMixDataset(
@@ -55,15 +71,15 @@ def get_dataloader(config: Config):
                 preprocessor=preprocessor,
                 data_aux_preprocessor=data_aux_preprocessor)
             sampler = None
-            if dataset_config.num_gpus * dataset_config.num_machines > 1:
-                sampler = torch.utils.data.distributed.DistributedSampler(
-                    dataset)
-                split_config.shuffle = False
+            # if dataset_config.num_gpus * dataset_config.num_machines > 1:
+            #     sampler = torch.utils.data.distributed.DistributedSampler(
+            #         dataset)
+            #     split_config.shuffle = False
 
             dataloader = DataLoader(dataset,
                                     batch_size=split_config.batch_size,
                                     shuffle=split_config.shuffle,
-                                    num_workers=dataset_config.num_workers,
+                                    # num_workers=dataset_config.num_workers,
                                     sampler=sampler)
         else:
             CustomDataset = eval(split_config.dataset_class)
@@ -75,22 +91,23 @@ def get_dataloader(config: Config):
                 preprocessor=preprocessor,
                 data_aux_preprocessor=data_aux_preprocessor)
             sampler = None
-            if dataset_config.num_gpus * dataset_config.num_machines > 1:
-                sampler = torch.utils.data.distributed.DistributedSampler(
-                    dataset)
-                split_config.shuffle = False
+            # if dataset_config.num_gpus * dataset_config.num_machines > 1:
+            #     sampler = torch.utils.data.distributed.DistributedSampler(
+            #         dataset)
+            #     split_config.shuffle = False
 
             dataloader = DataLoader(dataset,
                                     batch_size=split_config.batch_size,
                                     shuffle=split_config.shuffle,
-                                    num_workers=dataset_config.num_workers,
+                                    # num_workers=dataset_config.num_workers,
                                     sampler=sampler)
 
         dataloader_dict[split] = dataloader
     return dataloader_dict
 
 
-def get_ood_dataloader(config: Config):
+def get_ood_dataloader(config: Config,
+                       data_dir):
     # specify custom dataset class
     ood_config = config.ood_dataset
     CustomDataset = eval(ood_config.dataset_class)
@@ -99,7 +116,12 @@ def get_ood_dataloader(config: Config):
         split_config = ood_config[split]
         preprocessor = get_preprocessor(config, split)
         data_aux_preprocessor = TestStandardPreProcessor(config)
+
         if split == 'val':
+
+            split_config.imglist_pth = split_config.imglist_pth.replace("./data", data_dir) # added for convenience
+            split_config.data_dir = split_config.data_dir.replace("./data", data_dir)
+            
             # validation set
             dataset = CustomDataset(
                 name=ood_config.name + '_' + split,
@@ -111,13 +133,18 @@ def get_ood_dataloader(config: Config):
             dataloader = DataLoader(dataset,
                                     batch_size=ood_config.batch_size,
                                     shuffle=ood_config.shuffle,
-                                    num_workers=ood_config.num_workers)
+                                    # num_workers=ood_config.num_workers
+                                    )
             dataloader_dict[split] = dataloader
         else:
             # dataloaders for csid, nearood, farood
             sub_dataloader_dict = {}
             for dataset_name in split_config.datasets:
                 dataset_config = split_config[dataset_name]
+
+                dataset_config.imglist_pth = dataset_config.imglist_pth.replace("./data", data_dir) # added for convenience
+                dataset_config.data_dir = dataset_config.data_dir.replace("./data", data_dir)
+
                 dataset = CustomDataset(
                     name=ood_config.name + '_' + split,
                     imglist_pth=dataset_config.imglist_pth,
@@ -128,7 +155,8 @@ def get_ood_dataloader(config: Config):
                 dataloader = DataLoader(dataset,
                                         batch_size=ood_config.batch_size,
                                         shuffle=ood_config.shuffle,
-                                        num_workers=ood_config.num_workers)
+                                        # num_workers=ood_config.num_workers
+                                        )
                 sub_dataloader_dict[dataset_name] = dataloader
             dataloader_dict[split] = sub_dataloader_dict
 
@@ -152,7 +180,8 @@ def get_feature_dataloader(dataset_config: Config):
     dataloader = DataLoader(dataset,
                             batch_size=split_config.batch_size,
                             shuffle=split_config.shuffle,
-                            num_workers=dataset_config.num_workers)
+                            # num_workers=dataset_config.num_workers
+                            )
 
     return dataloader
 
@@ -183,7 +212,8 @@ def get_feature_opengan_dataloader(dataset_config: Config):
         dataloader = DataLoader(dataset,
                                 batch_size=split_config.batch_size,
                                 shuffle=split_config.shuffle,
-                                num_workers=dataset_config.num_workers)
+                                # num_workers=dataset_config.num_workers
+                                )
         dataloader_dict[d] = dataloader
 
     return dataloader_dict
