@@ -50,7 +50,7 @@ class MyDataset(Dataset):
 class MnistOodRandomDataset(MyDataset):
     def __init__(self):
         super(MnistOodRandomDataset, self).__init__()
-        self.images, self.class_labels, self.ood_labels = self.get_dataset(100)
+        self.images, self.class_labels, self.ood_labels = self.get_dataset(60000)
 
 
     def get_dataset(self, num_random_ood=100):

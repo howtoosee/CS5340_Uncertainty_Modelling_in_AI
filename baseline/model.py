@@ -13,14 +13,15 @@ class ImageClassification(L.LightningModule):
 
         # mnist images are (28, 28) (channels, width, height)
         self.layers = nn.Sequential(*[
-            nn.Linear(28 * 28, 256),
+            nn.Conv2d(1, 8, 3, 1), # (b, 8, 26, 26)
             nn.ReLU(),
-            nn.Dropout(p=0.1),
-            nn.Linear(256, 128),
+            nn.Conv2d(8, 16, 5, 1), # (b, 16, 22, 22)
             nn.ReLU(),
-            nn.Dropout(p=0.1),
-            nn.Linear(128, num_classes),
-            nn.Softmax(dim=1),
+            nn.MaxPool2d(2, 2), # (b, 16, 11, 11)
+            nn.Flatten(), # (b, 16*11*11)
+            nn.Linear(16*11*11, 256),
+            nn.ReLU(),
+            nn.Linear(256, num_classes),
         ])
 
         self.metrics = nn.ModuleDict({
@@ -30,11 +31,12 @@ class ImageClassification(L.LightningModule):
 
 
     def forward(self, x):
-        batch_size, width, height = x.size()
+        # batch_size, width, height = x.size()
 
-        # (b, 28, 28) -> (b, 28*28)
-        x = x.view(batch_size, -1)
-        return self.layers(x)
+        # # (b, 28, 28) -> (b, 28*28)
+        # x = x.view(batch_size, -1)
+        # x: (batch_size, 28, 28)
+        return self.layers(x.unsqueeze(1))
 
 
     #
@@ -59,18 +61,17 @@ class ImageClassification(L.LightningModule):
 
 
 class OodClassification(L.LightningModule):
-    def __init__(self, hidden_dim=10):
+    def __init__(self, hidden_dim=16):
         super().__init__()
 
         self.layers = nn.Sequential(*[
             nn.Linear(10, hidden_dim),
             nn.ReLU(),
-            nn.Dropout(p=0.1),
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
-            nn.Dropout(p=0.1),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
             nn.Linear(hidden_dim, 2),
-            nn.Softmax(dim=1),
         ])
 
         self.metrics = nn.ModuleDict({
@@ -80,6 +81,7 @@ class OodClassification(L.LightningModule):
 
 
     def forward(self, x):
+        # x: (batch_size, 10)
         return self.layers(x)
 
 
@@ -99,7 +101,7 @@ class MyModel(L.LightningModule):
     def training_step(self, batch, batch_idx):
         images, image_class, ood_class = batch
         image_class_logits = self.image_classifier(images)
-        ood_class_logits = self.ood_classifier(image_class_logits)
+        ood_class_logits = self.ood_classifier(image_class_logits.detach())
 
         ood_classification_loss = self.loss_fn(ood_class_logits, ood_class)
 
@@ -127,12 +129,20 @@ class MyModel(L.LightningModule):
         images, image_class, ood_class = batch
 
         image_class_logits = self.image_classifier(images)
-        ood_class_logits = self.ood_classifier(image_class_logits)
+        ood_class_logits = self.ood_classifier(image_class_logits.detach())
 
         # print(image_class_logits.size(), image_class.size())
         # print(ood_class_logits.size(), ood_class.size())
-        image_classification_loss = self.loss_fn(image_class_logits, image_class)
+        
         ood_classification_loss = self.loss_fn(ood_class_logits, ood_class)
+
+        # remove ood samples from image classification loss
+        id_indices = torch.nonzero(image_class >= 0).squeeze()
+        image_class_logits = image_class_logits[id_indices]
+        image_class = image_class[id_indices]
+
+        image_classification_loss = self.loss_fn(image_class_logits, image_class)
+        
         total_loss = image_classification_loss + ood_classification_loss
 
         ## Accumulate losses automatically
@@ -142,16 +152,17 @@ class MyModel(L.LightningModule):
 
         # class_metrics = {k: compute_metric(image_class_logits.cpu(), image_class.cpu()) for k, compute_metric in self.image_classifier.metrics.items()}
         # ood_metrics = {k: compute_metric(ood_class_logits.cpu(), ood_class.cpu()) for k, compute_metric in self.ood_classifier.metrics.items()}
+        
         ood_class_preds = ood_class_logits.argmax(dim=1)
         self.test_preds['class'].extend(image_class_logits.cpu().numpy().tolist())
+        self.test_preds['ood'].extend(ood_class_preds.cpu().numpy().tolist())
         # from sklearn.metrics import f1_score
         # print(f1_score(ood_class.cpu(), ood_class_preds.cpu()))
 
         for name, metric in self.image_classifier.metrics.items():
-            metric.update(image_class_logits, image_class)
+            metric.update(image_class_logits.argmax(dim=1), image_class)
         for name, metric in self.ood_classifier.metrics.items():
             metric.update(ood_class_preds, ood_class)
-
 
     def on_validation_epoch_end(self):
         class_metrics = {k: metric.compute() for k, metric in self.image_classifier.metrics.items()}
@@ -162,8 +173,10 @@ class MyModel(L.LightningModule):
         self.log('test/ood_class_acc', ood_metrics['acc'], on_step=False, on_epoch=True, prog_bar=False)
         self.log('test/ood_class_f1', ood_metrics['f1'], on_step=False, on_epoch=True, prog_bar=False)
 
+        print(class_metrics)
+        print(ood_metrics)
+
         ood_preds = torch.tensor(self.test_preds['ood'])
-        print("Predicted OOD:", torch.nonzero(ood_preds > 1).tolist())
 
         return {
             # 'test_loss': total_loss,
