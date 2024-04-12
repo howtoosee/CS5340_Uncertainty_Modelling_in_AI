@@ -208,3 +208,50 @@ class CIFAR10_FAR_ODD_Dataset(BaseDataset):
         else:
             image = np.uint8(image)
         return image
+
+
+class MNIST_NEAR_OOD_Dataset(BaseDataset):
+    """
+    Labels 0-9 are in-distribution data from MNIST
+    Labels 10-19 are far out-of-distribution data from NOTMNIST
+    Labels 20-29 are far out-of-distribution data from FashionMNIST
+    """
+    def __init__(self, is_train: bool, transform: Optional[bool]=None) -> None:
+        self.is_train = is_train
+        self.transform = transform
+        super().__init__(is_train=is_train)
+
+    def load_dataset(self):
+        # Load MNIST dataset
+        mnist_data = DATASETS['mnist'](
+            root=CACHED_DIR,
+            train=self.is_train,
+            download=True,
+        )
+
+        notmnist_data = CustomDataset(
+            dataset_name="notmnist",
+            is_train=self.is_train,
+            offset=10,
+        )
+
+        fashionmnist_data = CustomDataset(
+            dataset_name="fashionmnist",
+            is_train=self.is_train,
+            offset=20,
+        )
+
+        final_dataset = torch.utils.data.ConcatDataset([mnist_data, notmnist_data, fashionmnist_data])
+
+        return final_dataset
+
+    def __getitem__(self, idx):
+        image, label = self.dataset[idx]
+
+        if self.transform:
+            image = self.transform(image)
+        else:
+            image = np.array(image)
+
+        return image, label
+
