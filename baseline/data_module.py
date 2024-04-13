@@ -7,6 +7,7 @@ import torch
 import torch.utils
 from torch.utils.data import Dataset, DataLoader, ConcatDataset, Subset
 from torchvision.datasets import mnist, CIFAR10, CIFAR100
+from torchvision.transforms import Compose, Pad
 from torchvision.transforms.functional import rgb_to_grayscale
 
 RANDOM_STATE = 42
@@ -14,10 +15,20 @@ np.random.seed(RANDOM_STATE)
 
 
 def sample(dataset, n):
-    """Ranomly take n samples from the dataset"""
+    """Randomly take n samples from the dataset"""
     assert n < len(dataset)
     indices = np.random.choice(len(dataset), n, replace=False)
     return Subset(dataset, indices)
+
+
+def pad_by_2(images: torch.Tensor):
+    """Pads a batch of images by 2 pixels on all sides"""
+    transformation = Compose(
+        [
+            Pad(padding=(2, 2), fill=0, padding_mode="constant"),
+        ]
+    )
+    return torch.stack([transformation(image) for image in images])
 
 
 class MyDataset(Dataset):
@@ -34,9 +45,9 @@ class MyDataset(Dataset):
         # print("Images size:", self.images.size())
         # print("Class labels size:", self.class_labels.size())
         # print("Ood labels size:", self.ood_labels.size())
-        image = torch.tensor(self.images[idx]).to(dtype=torch.float32).squeeze()
-        label = torch.tensor(self.class_labels[idx]).to(dtype=torch.int32)
-        ood_label = torch.tensor(self.ood_labels[idx]).to(dtype=torch.int32)
+        image = self.images[idx].to(dtype=torch.float32)
+        label = self.class_labels[idx].to(dtype=torch.int32)
+        ood_label = self.ood_labels[idx].to(dtype=torch.int32)
 
         return image, label, ood_label
 
@@ -58,7 +69,6 @@ class Cifar10(MyDataset):
     def get_dataset(self, download_path):
         data = CIFAR10(download_path, train=self.is_train, download=True)
         images = rearrange(torch.tensor(data.data), "b h w c -> b c h w")
-        print(images.shape)
         images = rgb_to_grayscale(images)
         image_labels = torch.tensor(data.targets)
         ood_labels = torch.zeros(len(images), dtype=torch.int) + self.ood_label
@@ -97,6 +107,8 @@ class MnistDataset(MyDataset):
     def get_dataset(self, download_path):
         data = mnist.MNIST(download_path, train=self.is_train, download=True)
         images = torch.tensor(data.data)
+        assert images.shape[1:] == (28, 28)
+        images = pad_by_2(images)
         image_labels = torch.tensor(data.targets)
         ood_labels = torch.zeros(len(images), dtype=torch.int) + self.ood_label
 
@@ -115,6 +127,8 @@ class NotMnistDataset(MyDataset):
     def get_dataset(self, download_path):
         data = self.load_notmnist_data()
         images = torch.tensor(data.data)
+        assert images.shape[1:] == (28, 28)
+        images = pad_by_2(images)
         image_labels = torch.tensor(data.targets)
         ood_labels = torch.zeros(len(images), dtype=torch.int) + self.ood_label
 
@@ -146,6 +160,8 @@ class FashionMnistDataset(MyDataset):
     def get_dataset(self, download_path):
         data = mnist.FashionMNIST(download_path, train=self.is_train, download=True)
         images = torch.tensor(data.data)
+        assert images.shape[1:] == (28, 28)
+        images = pad_by_2(images)
         image_labels = torch.tensor(data.targets)
         ood_labels = torch.zeros(len(images), dtype=torch.int) + self.ood_label
 
@@ -158,12 +174,17 @@ Functions to generate datasets
 
 
 def get_cifar10_train():
-    return {"dataset": Cifar10(0, is_train=True), "num_classes_id": 10, "num_classes_ood": 0}
+    return {
+        "dataset": Cifar10(0, is_train=True),
+        "num_classes_id": 10,
+        "num_classes_ood": 0,
+    }
 
 
 def get_cifar10_near(is_train=False):
     id_data = Cifar10(0, is_train=is_train)
-    ood_data = Cifar100(10, is_train=is_train).sample(int(len(id_data) / 10))
+    n = int(len(id_data) / 10)
+    ood_data = Cifar100(10, is_train=is_train).sample(n)
     return {
         "dataset": torch.utils.data.ConcatDataset([id_data, ood_data]),
         "num_classes_id": 10,
