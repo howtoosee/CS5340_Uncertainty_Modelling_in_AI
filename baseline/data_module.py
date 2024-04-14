@@ -2,7 +2,7 @@ import glob
 from einops import rearrange
 import numpy as np
 import pandas as pd
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 import torch
 import torch.utils
 from torch.utils.data import Dataset, DataLoader, ConcatDataset, Subset
@@ -28,7 +28,8 @@ def pad_by_2(images: torch.Tensor):
             Pad(padding=(2, 2), fill=0, padding_mode="constant"),
         ]
     )
-    return torch.stack([transformation(image) for image in images])
+    images = torch.stack([transformation(image) for image in images])
+    return images
 
 
 class MyDataset(Dataset):
@@ -46,8 +47,8 @@ class MyDataset(Dataset):
         # print("Class labels size:", self.class_labels.size())
         # print("Ood labels size:", self.ood_labels.size())
         image = self.images[idx].to(dtype=torch.float32)
-        label = self.class_labels[idx].to(dtype=torch.int32)
-        ood_label = self.ood_labels[idx].to(dtype=torch.int32)
+        label = self.class_labels[idx].to(dtype=torch.int64)
+        ood_label = self.ood_labels[idx].to(dtype=torch.int64)
 
         return image, label, ood_label
 
@@ -58,7 +59,7 @@ class MyDataset(Dataset):
 
 
 class Cifar10(MyDataset):
-    def __init__(self, label_offset, is_train, ood_label=0, download_path="../downloaded_data"):
+    def __init__(self, is_train, label_offset, ood_label, download_path="../downloaded_data"):
         super().__init__()
         self.is_train = is_train
         self.ood_label = ood_label
@@ -71,13 +72,13 @@ class Cifar10(MyDataset):
         images = rearrange(torch.tensor(data.data), "b h w c -> b c h w")
         images = rgb_to_grayscale(images)
         image_labels = torch.tensor(data.targets)
-        ood_labels = torch.zeros(len(images), dtype=torch.int) + self.ood_label
+        ood_labels = torch.zeros(len(images)) + self.ood_label
 
         return images, image_labels, ood_labels
 
 
 class Cifar100(MyDataset):
-    def __init__(self, label_offset, is_train=False, ood_label=1, download_path="../downloaded_data"):
+    def __init__(self, is_train, label_offset, ood_label, download_path="../downloaded_data"):
         super().__init__()
         self.is_train = is_train
         self.ood_label = ood_label
@@ -90,13 +91,13 @@ class Cifar100(MyDataset):
         images = rearrange(torch.tensor(data.data), "b h w c -> b c h w")
         images = rgb_to_grayscale(images)
         image_labels = torch.tensor(data.targets)
-        ood_labels = torch.zeros(len(images), dtype=torch.int) + self.ood_label
+        ood_labels = torch.zeros(len(images)) + self.ood_label
 
         return images, image_labels, ood_labels
 
 
 class MnistDataset(MyDataset):
-    def __init__(self, label_offset, is_train=False, ood_label=0, download_path="../downloaded_data"):
+    def __init__(self, is_train, label_offset, ood_label, download_path="../downloaded_data"):
         super().__init__()
         self.is_train = is_train
         self.ood_label = ood_label
@@ -106,17 +107,17 @@ class MnistDataset(MyDataset):
 
     def get_dataset(self, download_path):
         data = mnist.MNIST(download_path, train=self.is_train, download=True)
-        images = torch.tensor(data.data)
-        assert images.shape[1:] == (28, 28)
+        images = rearrange(data.data, "b h w -> b 1 h w")
+        assert images.shape[1:] == (1, 28, 28), f"Expected shape (b, 1, 28, 28), got {images.shape} instead"
         images = pad_by_2(images)
-        image_labels = torch.tensor(data.targets)
-        ood_labels = torch.zeros(len(images), dtype=torch.int) + self.ood_label
+        image_labels = data.targets
+        ood_labels = torch.zeros(len(images)) + self.ood_label
 
         return images, image_labels, ood_labels
 
 
 class NotMnistDataset(MyDataset):
-    def __init__(self, label_offset, is_train=False, ood_label=1, download_path="../downloaded_data"):
+    def __init__(self, is_train, label_offset, ood_label, download_path="../downloaded_data"):
         super().__init__()
         self.is_train = is_train
         self.ood_label = ood_label
@@ -125,16 +126,13 @@ class NotMnistDataset(MyDataset):
         self.num_classes = 10
 
     def get_dataset(self, download_path):
-        data = self.load_notmnist_data()
-        images = torch.tensor(data.data)
-        assert images.shape[1:] == (28, 28)
+        images, labels = self.load_data()
+        assert images.shape[1:] == (1, 28, 28), f"Expected shape (b, 1, 28, 28), got {images.shape} instead"
         images = pad_by_2(images)
-        image_labels = torch.tensor(data.targets)
-        ood_labels = torch.zeros(len(images), dtype=torch.int) + self.ood_label
+        ood_labels = torch.zeros(len(images)) + self.ood_label
+        return images, labels, ood_labels
 
-        return images, image_labels, ood_labels
-
-    def load_notmnist_data(root="../downloaded_data/notMNIST_small/*/*"):
+    def load_data(self, root="../downloaded_data/notMNIST_small/*/*"):
         fnames = glob.glob(root)
         images = []
         targets = []
@@ -142,14 +140,19 @@ class NotMnistDataset(MyDataset):
             splits = fname.split("/")
             label = splits[-2]
             label = ord(label.lower()) - ord("a")
-            image = Image.open(fname)
+            try:
+                with Image.open(fname) as image:
+                    image = Image.open(fname).convert("L")
+            except UnidentifiedImageError as e:
+                continue
+            image = rearrange(torch.tensor(np.array(image)), "h w -> 1 1 h w")
             images.append(image)
             targets.append(label)
-        return {"images": images, "labels": targets}
+        return torch.vstack(images), torch.tensor(targets)
 
 
 class FashionMnistDataset(MyDataset):
-    def __init__(self, label_offset, is_train=False, ood_label=1, download_path="../downloaded_data"):
+    def __init__(self, is_train, label_offset, ood_label, download_path="../downloaded_data"):
         super().__init__()
         self.is_train = is_train
         self.ood_label = ood_label
@@ -159,11 +162,11 @@ class FashionMnistDataset(MyDataset):
 
     def get_dataset(self, download_path):
         data = mnist.FashionMNIST(download_path, train=self.is_train, download=True)
-        images = torch.tensor(data.data)
-        assert images.shape[1:] == (28, 28)
+        images = rearrange(data.data, "b h w -> b 1 h w")
+        assert images.shape[1:] == (1, 28, 28), f"Expected shape (b, 1, 28, 28), got {images.shape} instead"
         images = pad_by_2(images)
         image_labels = torch.tensor(data.targets)
-        ood_labels = torch.zeros(len(images), dtype=torch.int) + self.ood_label
+        ood_labels = torch.zeros(len(images)) + self.ood_label
 
         return images, image_labels, ood_labels
 
@@ -175,36 +178,36 @@ Functions to generate datasets
 
 def get_cifar10_train():
     return {
-        "dataset": Cifar10(0, is_train=True),
+        "dataset": Cifar10(is_train=True, label_offset=0),
         "num_classes_id": 10,
         "num_classes_ood": 0,
     }
 
 
 def get_cifar10_near(is_train=False):
-    id_data = Cifar10(0, is_train=is_train)
+    id_data = Cifar10(is_train=is_train, label_offset=0, ood_label=0)
     n = int(len(id_data) / 10)
-    ood_data = Cifar100(10, is_train=is_train).sample(n)
+    ood_data = Cifar100(is_train=is_train, label_offset=10, ood_label=1).sample(n)
     return {
-        "dataset": torch.utils.data.ConcatDataset([id_data, ood_data]),
+        "dataset": ConcatDataset([id_data, ood_data]),
         "num_classes_id": 10,
         "num_classes_ood": 100,
     }
 
 
 def get_cifar10_far(is_train=False):
-    id_data = (Cifar10(0, is_train=is_train),)
+    id_data = Cifar10(is_train=is_train, label_offset=0, ood_label=0)
     n = int(len(id_data) / 10 / 3)
 
     ood_data = ConcatDataset(
         [
-            MnistDataset(20, is_train=is_train).sample(n),
-            FashionMnistDataset(30, is_train=is_train).sample(n),
-            NotMnistDataset(40, is_train=is_train).sample(n),
+            MnistDataset(is_train=is_train, label_offset=20, ood_label=1).sample(n),
+            FashionMnistDataset(is_train=is_train, label_offset=30, ood_label=1).sample(n),
+            NotMnistDataset(is_train=is_train, label_offset=40, ood_label=1).sample(n),
         ]
     )
     return {
-        "dataset": ConcatDataset(id_data, ood_data),
+        "dataset": ConcatDataset([id_data, ood_data]),
         "num_classes_id": 10,
         "num_classes_ood": 30,
     }
@@ -212,51 +215,51 @@ def get_cifar10_far(is_train=False):
 
 def get_mnist_train():
     return {
-        "dataset": MnistDataset(0, is_train=True),
+        "dataset": MnistDataset(is_train=True, label_offset=0, ood_label=0),
         "num_classes_id": 10,
         "num_classes_ood": 0,
     }
 
 
 def get_mnist_near(is_train=False):
-    id_data = (MnistDataset(0, is_train),)
+    id_data = MnistDataset(is_train=is_train, label_offset=0, ood_label=0)
     n = int(len(id_data) / 10 / 2)
     ood_data = ConcatDataset(
         [
-            FashionMnistDataset(10, is_train).sample(n),
-            NotMnistDataset(20, is_train).sample(n),
+            FashionMnistDataset(is_train=is_train, label_offset=10, ood_label=1).sample(n),
+            NotMnistDataset(is_train=is_train, label_offset=20, ood_label=1).sample(n),
         ]
     )
 
     return {
-        "dataset": torch.utils.data.ConcatDataset([id_data, ood_data]),
+        "dataset": ConcatDataset([id_data, ood_data]),
         "num_classes_id": 10,
         "num_classes_ood": 20,
     }
 
 
 def get_mnist_far1(is_train=False):
-    id_data = (MnistDataset(0, is_train=is_train),)
+    id_data = MnistDataset(is_train=is_train, label_offset=0, ood_label=0)
     n = int(len(id_data) / 10 / 2)
     ood_data = ConcatDataset(
         [
-            Cifar10(10, is_train=is_train).sample(n),
-            Cifar100(20, is_train=is_train).sample(n),
+            Cifar10(is_train=is_train, label_offset=10, ood_label=1).sample(n),
+            Cifar100(is_train=is_train, label_offset=20, ood_label=1).sample(n),
         ]
     )
     return {
-        "dataset": torch.utils.data.ConcatDataset([id_data, ood_data]),
+        "dataset": ConcatDataset([id_data, ood_data]),
         "num_classes_id": 10,
         "num_classes_ood": 110,
     }
 
 
 def get_mnist_far2(is_train=False):
-    id_data = (MnistDataset(0, is_train=is_train),)
+    id_data = MnistDataset(is_train=is_train, label_offset=0, ood_label=0)
     n = int(len(id_data) / 10)
-    ood_data = Cifar10(10, is_train=is_train).sample(n)
+    ood_data = Cifar10(is_train=is_train, label_offset=10, ood_label=1).sample(n)
     return {
-        "dataset": torch.utils.data.ConcatDataset([id_data, ood_data]),
+        "dataset": ConcatDataset([id_data, ood_data]),
         "num_classes_id": 10,
         "num_classes_ood": 10,
     }
