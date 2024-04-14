@@ -1,31 +1,35 @@
+import torch
 from torch.utils import data
 import lightning as L
 from lightning import Fabric
-from model import ImageClassification, OodClassification, MyModel
+from lightning.pytorch import loggers as pl_loggers
+from einops import rearrange
+
 import data_module
+from model import ImageClassification, OodClassification, MyModel
 
 
 def main():
-    # fabric = Fabric(devices='mps' if torch.backends.mps.is_available() else 'auto')
-    # fabric = Fabric(devices='auto')
 
-    # Load dataset
-    dataset = data_module.MnistOodRandomDataset()
-    n = len(dataset)
-    train_size = int(0.8 * n)
-    train_set, test_set = data.random_split(dataset, [train_size, n - train_size])
-    train_loader = data.DataLoader(train_set, batch_size=64, shuffle=True)
-    test_loader = data.DataLoader(test_set, batch_size=64, shuffle=True)
+    train_dict = data_module.get_cifar10_near(is_train=True)
+    test_dict = data_module.get_cifar10_near(is_train=False)
+
+    train_data = train_dict["dataset"]
+    test_data = test_dict["dataset"]
+    num_classes = train_dict["num_classes_id"]
+
+    train_loader = data.DataLoader(test_data, batch_size=16, shuffle=True, num_workers=2)  # TODO change to train_data
+    test_loader = data.DataLoader(test_data, batch_size=16, shuffle=True, num_workers=2)
 
     # Create model
-    image_model = ImageClassification(num_classes=10)
+    image_model = ImageClassification(num_classes=num_classes)
     ood_model = OodClassification()
-    model = MyModel(image_model, ood_model)
+    model = MyModel(image_model, ood_model, cutoff_epoch=40)
 
     # Train model
-    trainer = L.Trainer(devices='auto')
+    trainer = L.Trainer(max_epochs=100, logger=True)
     trainer.fit(model, train_loader, test_loader)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
