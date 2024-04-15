@@ -175,6 +175,8 @@ class FashionMnistDataset(MyDataset):
 Functions to generate datasets
 """
 
+PROPORTION = 0.01
+
 
 def get_cifar10_train():
     return {
@@ -186,7 +188,7 @@ def get_cifar10_train():
 
 def get_cifar10_near(is_train=False):
     id_data = Cifar10(is_train=is_train, label_offset=0, ood_label=0)
-    n = int(len(id_data) / 10)
+    n = int(len(id_data) * PROPORTION)
     ood_data = Cifar100(is_train=is_train, label_offset=10, ood_label=1).sample(n)
     return {
         "dataset": ConcatDataset([id_data, ood_data]),
@@ -197,7 +199,7 @@ def get_cifar10_near(is_train=False):
 
 def get_cifar10_far(is_train=False):
     id_data = Cifar10(is_train=is_train, label_offset=0, ood_label=0)
-    n = int(len(id_data) / 10 / 3)
+    n = int(len(id_data) * PROPORTION / 3)
 
     ood_data = ConcatDataset(
         [
@@ -223,7 +225,7 @@ def get_mnist_train():
 
 def get_mnist_near(is_train=False):
     id_data = MnistDataset(is_train=is_train, label_offset=0, ood_label=0)
-    n = int(len(id_data) / 10 / 2)
+    n = int(len(id_data) * PROPORTION / 2)
     ood_data = ConcatDataset(
         [
             FashionMnistDataset(is_train=is_train, label_offset=10, ood_label=1).sample(n),
@@ -240,7 +242,7 @@ def get_mnist_near(is_train=False):
 
 def get_mnist_far1(is_train=False):
     id_data = MnistDataset(is_train=is_train, label_offset=0, ood_label=0)
-    n = int(len(id_data) / 10 / 2)
+    n = int(len(id_data) * PROPORTION / 2)
     ood_data = ConcatDataset(
         [
             Cifar10(is_train=is_train, label_offset=10, ood_label=1).sample(n),
@@ -256,7 +258,7 @@ def get_mnist_far1(is_train=False):
 
 def get_mnist_far2(is_train=False):
     id_data = MnistDataset(is_train=is_train, label_offset=0, ood_label=0)
-    n = int(len(id_data) / 10)
+    n = int(len(id_data) * PROPORTION)
     ood_data = Cifar10(is_train=is_train, label_offset=10, ood_label=1).sample(n)
     return {
         "dataset": ConcatDataset([id_data, ood_data]),
