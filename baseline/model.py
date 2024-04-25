@@ -1,8 +1,7 @@
 import torch
-from torchmetrics import classification as C
 from torch import nn
+from torchmetrics import classification as C
 import lightning as L
-from einops import rearrange, reduce, repeat
 
 
 class ImageClassification(L.LightningModule):
@@ -11,184 +10,186 @@ class ImageClassification(L.LightningModule):
 
         self.num_classes = num_classes
 
-        # mnist images are (28, 28) (channels, width, height)
-        self.layers = nn.Sequential(*[
-            nn.Conv2d(1, 8, 3, 1), # (b, 8, 26, 26)
-            nn.ReLU(),
-            nn.Conv2d(8, 16, 5, 1), # (b, 16, 22, 22)
-            nn.ReLU(),
-            nn.MaxPool2d(2, 2), # (b, 16, 11, 11)
-            nn.Flatten(), # (b, 16*11*11)
-            nn.Linear(16*11*11, 256),
-            nn.ReLU(),
-            nn.Linear(256, num_classes),
-        ])
+        # images size (b, 1, 32, 32)
+        self.layers = nn.Sequential(
+            *[
+                nn.Conv2d(1, 8, 3, 1),  # (b, 8, 30, 30)
+                nn.ReLU(),
+                nn.Conv2d(8, 16, 5, 1),  # (b, 16, 26, 26)
+                nn.ReLU(),
+                nn.MaxPool2d(2, 2),  # (b, 16, 13, 13)
+                nn.Flatten(),  # (b, 16x13x13)
+                nn.Linear(16 * 13 * 13, 256),
+                nn.ReLU(),
+                nn.Linear(256, num_classes),
+            ]
+        )
 
-        self.metrics = nn.ModuleDict({
-            'acc': C.MulticlassAccuracy(num_classes),
-            'f1': C.MulticlassF1Score(10, average='micro'),
-        })
+        self.metrics = nn.ModuleDict(
+            {
+                "acc": C.MulticlassAccuracy(num_classes),
+                "f1": C.MulticlassF1Score(num_classes, average="micro"),
+                "f1_all": C.MulticlassF1Score(num_classes, average=None),
+            }
+        )
 
+        self.criterion = nn.CrossEntropyLoss()
 
     def forward(self, x):
         # batch_size, width, height = x.size()
+        return self.layers(x)
 
-        # # (b, 28, 28) -> (b, 28*28)
-        # x = x.view(batch_size, -1)
-        # x: (batch_size, 28, 28)
-        return self.layers(x.unsqueeze(1))
-
-
-    #
-    #
-    # def validation_epoch_end(self, outputs):
-    #     avg_loss = torch.stack([x['val_loss'] for x in outputs]).mean()
-    #     tensorboard_logs = {'val_loss': avg_loss}
-    #     return {'avg_val_loss': avg_loss, 'log': tensorboard_logs}
-
-
-    # def test_epoch_end(self, outputs):
-    #     avg_loss = torch.stack([x['test_loss'] for x in outputs]).mean()
-    #     tensorboard_logs = {'test_loss': avg_loss}
-    #     return {'avg_test_loss': avg_loss, 'log': tensorboard_logs}
-
-
-    # def configure_optimizers(self):
-    #     optimizer = torch.optim.Adam(self.parameters(), lr=self.lr_rate)
-    #     lr_scheduler = {'scheduler': torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.95),
-    #                     'name': 'expo_lr'}
-    #     return [optimizer], [lr_scheduler]
+    def update_metrics(self, logits, gt):
+        if logits.shape[0] == 0 or gt.shape[0] == 0:
+            return
+        ## Update image classification metrics
+        probs = torch.softmax(logits, dim=1)
+        for name, metric in self.metrics.items():
+            metric.update(probs, gt)
 
 
 class OodClassification(L.LightningModule):
-    def __init__(self, hidden_dim=16):
+    def __init__(self, input_dim=10, hidden_dim=16):
         super().__init__()
 
-        self.layers = nn.Sequential(*[
-            nn.Linear(10, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, 2),
-        ])
+        self.layers = nn.Sequential(
+            *[
+                nn.Linear(input_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, 2),
+            ]
+        )
 
-        self.metrics = nn.ModuleDict({
-            'acc': C.BinaryAccuracy(),
-            'f1': C.BinaryF1Score(),
-        })
+        self.metrics = nn.ModuleDict(
+            {
+                "acc": C.BinaryAccuracy(),
+                "f1": C.BinaryF1Score(),
+                "auroc": C.BinaryAUROC(),
+                "auprc": C.BinaryAveragePrecision(),
+            }
+        )
 
+        # reduction = "mean" if loss_weight is not None else None
+        # self.criterion = nn.CrossEntropyLoss(weight=loss_weight, reduction=reduction)
+        self.criterion = nn.CrossEntropyLoss()
 
     def forward(self, x):
         # x: (batch_size, 10)
         return self.layers(x)
 
+    def update_metrics(self, logits, gt):
+        ## Update OOD classifcation metrics
+        probs = torch.softmax(logits, dim=1)
+        for name, metric in self.metrics.items():
+            metric.update(probs[:, 1], gt)
+
 
 class MyModel(L.LightningModule):
-    def __init__(self, image_classifier, ood_classifier):
+    def __init__(self, image_classifier, ood_classifier, cutoff_epoch=None):
         super().__init__()
         self.image_classifier = image_classifier
         self.ood_classifier = ood_classifier
+        self.cutoff_epoch = cutoff_epoch  # Epoch at which to stop training the image classifier
 
-        self.loss_fn = nn.CrossEntropyLoss()
-        self.test_preds = {
-            'class': list(),
-            'ood': list(),
-        }
+    def forward(self, image):
+        image_class_logits = self.image_classifier(image)
+        ood_class_logits = self.ood_classifier(image_class_logits.detach())
+        return image_class_logits, ood_class_logits
 
+    def _remove_ood_data(self, image_class_logits, image_class_gt, ood_class_gt):
+        ## Remove OOD samples from batch
+        ## ood_class == 0 -> in-distribution
+        id_indices = torch.nonzero(ood_class_gt == 0).squeeze()
+        image_class_logits = image_class_logits[id_indices]
+        image_class_gt = image_class_gt[id_indices]
+        assert (
+            image_class_gt.shape[0] == 0 or image_class_gt.max() <= self.image_classifier.num_classes
+        ), f"{list(zip(image_class_gt.tolist(), ood_class_gt.tolist()))}"
+
+        return image_class_logits, image_class_gt
 
     def training_step(self, batch, batch_idx):
-        images, image_class, ood_class = batch
-        image_class_logits = self.image_classifier(images)
-        ood_class_logits = self.ood_classifier(image_class_logits.detach())
+        images, image_class_gt, ood_class_gt = batch
+        # print(f"Training: {ood_class_gt.sum() / len(ood_class_gt):.3f} are OOD")
+        image_class_logits, ood_class_logits = self(images)
 
-        ood_classification_loss = self.loss_fn(ood_class_logits, ood_class)
+        ## Compute OOD detection loss
+        ood_classification_loss = self.ood_classifier.criterion(ood_class_logits, ood_class_gt)
 
-        # remove ood samples from image classification loss
-        id_indices = torch.nonzero(image_class >= 0).squeeze()
-        image_class_logits = image_class_logits[id_indices]
-        image_class = image_class[id_indices]
-
-        image_classification_loss = self.loss_fn(image_class_logits, image_class)
+        ## Compute image classification loss
+        image_class_logits, image_class_gt = self._remove_ood_data(image_class_logits, image_class_gt, ood_class_gt)
+        image_classification_loss = self.image_classifier.criterion(image_class_logits, image_class_gt)
 
         total_loss = image_classification_loss + ood_classification_loss
 
-        self.log('train/loss', total_loss, on_step=False, on_epoch=True, prog_bar=True)
-        self.log('train/image_class_loss', image_classification_loss, on_step=False, on_epoch=True, prog_bar=False)
-        self.log('train/ood_class_loss', ood_classification_loss, on_step=False, on_epoch=True, prog_bar=False)
+        self.log("loss/train_loss", total_loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
+        self.log("loss/train_image_class_loss", image_classification_loss, on_step=False, on_epoch=True, prog_bar=False, sync_dist=True)
+        self.log("loss/train_ood_class_loss", ood_classification_loss, on_step=False, on_epoch=True, prog_bar=False, sync_dist=True)
+
+        self.ood_classifier.update_metrics(ood_class_logits, ood_class_gt)
+        self.image_classifier.update_metrics(image_class_logits, image_class_gt)
 
         return {
-            'loss': total_loss,
-            'image_class_loss': image_classification_loss,
-            'ood_class_loss': ood_classification_loss
+            "loss": total_loss,
+            "image_class_loss": image_classification_loss,
+            "ood_class_loss": ood_classification_loss,
         }
 
+    def on_train_epoch_end(self) -> None:
+        class_metrics = {k: metric.compute().detach() for k, metric in self.image_classifier.metrics.items()}
+        # ood_metrics = {k: metric.compute().detach() for k, metric in {**self.ood_classifier.metrics_pred, **self.ood_classifier.metrics_logit}.items()}
+        ood_metrics = {k: metric.compute().detach() for k, metric in self.ood_classifier.metrics.items()}
+
+        self.log("train_metrics/image_class_acc", class_metrics["acc"], on_step=False, on_epoch=True, prog_bar=False, sync_dist=True)
+        self.log("train_metrics/image_class_f1", class_metrics["f1"], on_step=False, on_epoch=True, prog_bar=False, sync_dist=True)
+        for name, val in sorted(ood_metrics.items()):
+            self.log(f"train_metrics/ood_class_{name}", val, on_step=False, on_epoch=True, prog_bar=False, sync_dist=True)
+
+        return {"train_metrics": {"class": class_metrics, "ood": ood_metrics}}
 
     def validation_step(self, batch, batch_idx):
-        images, image_class, ood_class = batch
+        images, image_class_gt, ood_class_gt = batch
+        image_class_logits, ood_class_logits = self(images)
 
-        image_class_logits = self.image_classifier(images)
-        ood_class_logits = self.ood_classifier(image_class_logits.detach())
+        ## Compute OOD detection loss
+        ood_classification_loss = self.ood_classifier.criterion(ood_class_logits, ood_class_gt)
 
-        # print(image_class_logits.size(), image_class.size())
-        # print(ood_class_logits.size(), ood_class.size())
-        
-        ood_classification_loss = self.loss_fn(ood_class_logits, ood_class)
+        ## Compute image classification loss
+        image_class_logits, image_class_gt = self._remove_ood_data(image_class_logits, image_class_gt, ood_class_gt)
+        if image_class_logits.shape[0] > 0 and image_class_gt.shape[0] > 0:
+            ## batch has ID samples
+            image_classification_loss = self.image_classifier.criterion(image_class_logits, image_class_gt)
+        else:
+            ## batch only contains OOD samples
+            image_classification_loss = 0
 
-        # remove ood samples from image classification loss
-        id_indices = torch.nonzero(image_class >= 0).squeeze()
-        image_class_logits = image_class_logits[id_indices]
-        image_class = image_class[id_indices]
-
-        image_classification_loss = self.loss_fn(image_class_logits, image_class)
-        
-        total_loss = image_classification_loss + ood_classification_loss
+        total_loss = image_classification_loss + 5 * ood_classification_loss
 
         ## Accumulate losses automatically
-        self.log('test/loss', total_loss, on_step=False, on_epoch=True, prog_bar=True)
-        self.log('test/image_class_loss', image_classification_loss, on_step=False, on_epoch=True, prog_bar=False)
-        self.log('test/ood_class_loss', ood_classification_loss, on_step=False, on_epoch=True, prog_bar=False)
+        self.log("loss/test_loss", total_loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
+        self.log("loss/test_image_class_loss", image_classification_loss, on_step=False, on_epoch=True, prog_bar=False, sync_dist=True)
+        self.log("loss/test_ood_class_loss", ood_classification_loss, on_step=False, on_epoch=True, prog_bar=False, sync_dist=True)
 
-        # class_metrics = {k: compute_metric(image_class_logits.cpu(), image_class.cpu()) for k, compute_metric in self.image_classifier.metrics.items()}
-        # ood_metrics = {k: compute_metric(ood_class_logits.cpu(), ood_class.cpu()) for k, compute_metric in self.ood_classifier.metrics.items()}
-        
-        ood_class_preds = ood_class_logits.argmax(dim=1)
-        self.test_preds['class'].extend(image_class_logits.cpu().numpy().tolist())
-        self.test_preds['ood'].extend(ood_class_preds.cpu().numpy().tolist())
-        # from sklearn.metrics import f1_score
-        # print(f1_score(ood_class.cpu(), ood_class_preds.cpu()))
-
-        for name, metric in self.image_classifier.metrics.items():
-            metric.update(image_class_logits.argmax(dim=1), image_class)
-        for name, metric in self.ood_classifier.metrics.items():
-            metric.update(ood_class_preds, ood_class)
+        self.ood_classifier.update_metrics(ood_class_logits, ood_class_gt)
+        self.image_classifier.update_metrics(image_class_logits, image_class_gt)
 
     def on_validation_epoch_end(self):
-        class_metrics = {k: metric.compute() for k, metric in self.image_classifier.metrics.items()}
-        ood_metrics = {k: metric.compute() for k, metric in self.ood_classifier.metrics.items()}
+        class_metrics = {k: metric.compute().detach() for k, metric in self.image_classifier.metrics.items()}
+        ood_metrics = {k: metric.compute().detach() for k, metric in self.ood_classifier.metrics.items()}
 
-        self.log('test/image_class_acc', class_metrics['acc'], on_step=False, on_epoch=True, prog_bar=False)
-        self.log('test/image_class_f1', class_metrics['f1'], on_step=False, on_epoch=True, prog_bar=False)
-        self.log('test/ood_class_acc', ood_metrics['acc'], on_step=False, on_epoch=True, prog_bar=False)
-        self.log('test/ood_class_f1', ood_metrics['f1'], on_step=False, on_epoch=True, prog_bar=False)
+        self.log("test_metrics/image_class_acc", class_metrics["acc"], on_step=False, on_epoch=True, prog_bar=False, sync_dist=True)
+        self.log("test_metrics/image_class_f1", class_metrics["f1"], on_step=False, on_epoch=True, prog_bar=False, sync_dist=True)
+        for name, val in sorted(ood_metrics.items()):
+            self.log(f"test_metrics/ood_class_{name}", val, on_step=False, on_epoch=True, prog_bar=False, sync_dist=True)
 
-        print(class_metrics)
-        print(ood_metrics)
+        print(f"Testing epoch {self.current_epoch}")
+        print("Class", class_metrics)
+        print("OOD", ood_metrics)
 
-        ood_preds = torch.tensor(self.test_preds['ood'])
-
-        return {
-            # 'test_loss': total_loss,
-            # 'test_image_class_loss': image_classification_loss,
-            # 'test_ood_class_loss': ood_classification_loss,
-            'test_metrics': {
-                'class': class_metrics,
-                'ood': ood_metrics
-            }
-        }
-
+        return {"test_metrics": {"class": class_metrics, "ood": ood_metrics}}
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
+        optimizer = torch.optim.Adam(self.parameters(), lr=5e-4)
         return optimizer
