@@ -56,6 +56,12 @@ class MyDataset(Dataset):
         assert n < len(self)
         indices = np.random.choice(len(self), n, replace=False)
         return Subset(self, indices)
+    
+    def to(self, device):
+        self.images = self.images.to(device)
+        self.class_labels = self.class_labels.to(device)
+        self.ood_labels = self.ood_labels.to(device)
+        return self
 
 
 class Cifar10(MyDataset):
@@ -132,7 +138,7 @@ class NotMnistDataset(MyDataset):
         ood_labels = torch.zeros(len(images)) + self.ood_label
         return images, labels, ood_labels
 
-    def load_data(self, root="../downloaded_data/notMNIST_small/*/*"):
+    def load_data(self, root="/home/xihao/repository/cs5340/downloaded_data/notMNIST_small/*/*"):
         fnames = glob.glob(root)
         images = []
         targets = []
@@ -180,7 +186,7 @@ PROPORTION = 0.01
 
 def get_cifar10_train():
     return {
-        "dataset": Cifar10(is_train=True, label_offset=0),
+        "dataset": Cifar10(is_train=True, label_offset=0, ood_label=0),
         "num_classes_id": 10,
         "num_classes_ood": 0,
     }
