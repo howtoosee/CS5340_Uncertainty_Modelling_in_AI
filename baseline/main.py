@@ -8,28 +8,28 @@ import data_module
 from model import ImageClassification, OodClassification, MyModel
 
 def run_cifar10_near():
-    train_dict = data_module.get_cifar10_near(is_train=True)
-    test_dict = data_module.get_cifar10_near(is_train=False)
+    train_dict = data_module.get_cifar10_near(is_train=True, proportion=0.01)
+    test_dict = data_module.get_cifar10_near(is_train=False, proportion=0.5)
     return train_dict, test_dict
 
 def run_cifar10_far():
-    train_dict = data_module.get_cifar10_far(is_train=True)
-    test_dict = data_module.get_cifar10_far(is_train=False)
+    train_dict = data_module.get_cifar10_far(is_train=True, proportion=0.01)
+    test_dict = data_module.get_cifar10_far(is_train=False, proportion=0.5)
     return train_dict, test_dict
 
 def run_mnist_near():
-    train_dict = data_module.get_mnist_near(is_train=True)
-    test_dict = data_module.get_mnist_near(is_train=False)
+    train_dict = data_module.get_mnist_near(is_train=True, proportion=0.01)
+    test_dict = data_module.get_mnist_near(is_train=False, proportion=0.5)
     return train_dict, test_dict
 
 def run_mnist_far1():
-    train_dict = data_module.get_mnist_far1(is_train=True)
-    test_dict = data_module.get_mnist_far1(is_train=False)
+    train_dict = data_module.get_mnist_far1(is_train=True, proportion=0.01)
+    test_dict = data_module.get_mnist_far1(is_train=False, proportion=0.5)
     return train_dict, test_dict
 
 def run_mnist_far2():
-    train_dict = data_module.get_mnist_far2(is_train=True)
-    test_dict = data_module.get_mnist_far2(is_train=False)
+    train_dict = data_module.get_mnist_far2(is_train=True, proportion=0.01)
+    test_dict = data_module.get_mnist_far2(is_train=False, proportion=0.5)
     return train_dict, test_dict
 
 run_configs = dict(
