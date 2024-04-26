@@ -134,7 +134,7 @@ def get_ood_dataloader(config: Config,
                                     batch_size=ood_config.batch_size,
                                     shuffle=ood_config.shuffle,
                                     # num_workers=ood_config.num_workers
-                                    )
+                                    )   
             dataloader_dict[split] = dataloader
         else:
             # dataloaders for csid, nearood, farood

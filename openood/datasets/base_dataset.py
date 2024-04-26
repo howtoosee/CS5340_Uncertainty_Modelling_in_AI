@@ -27,7 +27,7 @@ class BaseDataset(Dataset):
             pseudo = 0
 
         while True:
-            try:
+            try:    
                 sample = self.getitem(index)
                 break
             except Exception as e:
